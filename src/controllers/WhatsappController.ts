@@ -35,14 +35,41 @@ class WhatsAppController {
       return;
     }
 
-    // Comandos principais
-    if (text.toLowerCase().startsWith('/')) {
-      await this.handleCommand(message);
-      return;
-    }
+    // Processar mensagem com linguagem natural
+    await this.processNaturalLanguage(message);
+  }
 
-    // Processar como gasto
-    await this.processExpense(message);
+  private async processNaturalLanguage(message: Message): Promise<void> {
+    const intentResult = await aiService.interpretIntent(message.body);
+
+    switch (intentResult.intent) {
+      case 'add_expense':
+        await this.processExpense(message);
+        break;
+      case 'add_income':
+        await this.updateBudget(message);
+        break;
+      case 'get_report':
+        await this.showReport(message);
+        break;
+      case 'get_balance':
+        await this.showBalance(message);
+        break;
+      case 'get_analysis':
+        await this.showAIAnalysis(message);
+        break;
+      case 'get_categorys':
+        await this.showCategorySummary(message);
+        break;
+      default:
+        await message.reply(
+          '❓ Desculpe, não entendi o que você quis dizer.\n\n' +
+          'Você pode tentar:\n' +
+          '- "Gastei 50 reais no mercado"\n' +
+          '- "Qual meu saldo?"\n' +
+          '- "Me mostre o relatório deste mês"'
+        );
+    }
   }
 
   private async startOnboarding(message: Message): Promise<void> {
@@ -107,66 +134,12 @@ class WhatsAppController {
         '📝 Agora você pode me enviar seus gastos naturalmente!\n' +
         'Exemplo: "Gastei 50 reais no mercado"\n\n' +
         '💡 Comandos disponíveis:\n' +
-        '/ajuda - Ver todos os comandos\n' +
-        '/saldo - Ver quanto você gastou\n' +
-        '/relatorio - Relatório detalhado\n' +
-        '/analise - Análise financeira com IA'
+        '- "Gastei 50 reais no mercado"\n' +
+        '- "Qual meu saldo?"\n' +
+        '- "Me mostre o relatório deste mês\n' +
+        '- "Ganhei 1500 reais no freelance"\n' +
+        '- "Me mostre uma análise financeira\n'
       );
-    }
-  }
-
-  private async handleCommand(message: Message): Promise<void> {
-    const phoneNumber = this.getRealUserNumber(message);
-    const user = memoryService.getUser(phoneNumber)!;
-    const command = message.body.toLowerCase().split(' ')[0];
-
-    switch (command) {
-      case '/ajuda':
-        await message.reply(
-          '🤖 *Comandos Disponíveis:*\n\n' +
-          '📊 *Consultas:*\n' +
-          '/saldo - Ver saldo atual e total gasto\n' +
-          '/relatorio - Relatório completo do mês\n' +
-          '/analise - Análise financeira com IA\n' +
-          '/categorias - Ver gastos por categoria\n\n' +
-          '⚙️ *Configurações:*\n' +
-          '/orcamento [valor] - Alterar orçamento mensal\n' +
-          '/perfil - Ver seu perfil financeiro\n\n' +
-          '📝 *Registrar gastos:*\n' +
-          'Basta enviar uma mensagem natural!\n' +
-          'Ex: "Gastei 50 no uber" ou "Paguei 200 na conta de luz"'
-        );
-        break;
-
-      case '/saldo':
-        await this.showBalance(message);
-        break;
-
-      case '/relatorio':
-        await this.showReport(message);
-        break;
-
-      case '/analise':
-        await this.showAIAnalysis(message);
-        break;
-
-      case '/categorias':
-        await this.showCategorySummary(message);
-        break;
-
-      case '/orcamento':
-        await this.updateBudget(message);
-        break;
-
-      case '/perfil':
-        await this.showProfile(message);
-        break;
-
-      default:
-        await message.reply(
-          '❓ Comando não reconhecido.\n' +
-          'Digite /ajuda para ver todos os comandos disponíveis.'
-        );
     }
   }
 
@@ -234,6 +207,7 @@ class WhatsAppController {
       );
     }
   }
+
 
   private async showBalance(message: Message): Promise<void> {
     const user = memoryService.getUser(message.from)!;
@@ -316,28 +290,39 @@ class WhatsAppController {
     await message.reply(text);
   }
 
-  private async updateBudget(message: Message): Promise<void> {
-    const parts = message.body.split(' ');
-    if (parts.length < 2) {
+  async updateBudget(message: Message): Promise<void> {
+    const user = memoryService.getUser(message.from)!;
+
+    // 1 — Analisa se mensagem descreve entrada de dinheiro
+    const income = await aiService.analyzeIncome(message.body, user);
+
+    if (!income.amount) {
       await message.reply(
-        '⚠️ Uso correto: /orcamento [valor]\n' +
-        'Exemplo: /orcamento 3500'
+        '⚠️ Não consegui identificar o valor da entrada de dinheiro.\n' +
+        'Tente algo como: "recebi 500", "caiu 2000 do salário", "ganhei 150".'
       );
       return;
     }
 
-    const newBudget = parseFloat(parts[1].replace(',', '.'));
-    if (isNaN(newBudget) || newBudget <= 0) {
-      await message.reply('⚠️ Por favor, informe um valor válido.');
-      return;
-    }
+    const oldBudget = user?.monthlyBudget ?? 0;
+    const newBudget = oldBudget + income.amount;
 
+    // 2 — Atualiza o orçamento somando a entrada
     memoryService.updateUser(message.from, { monthlyBudget: newBudget });
+
+    // 3 — Responde ao usuário
     await message.reply(
-      `✅ Orçamento atualizado!\n\n` +
-      `Novo orçamento mensal: R$ ${newBudget.toFixed(2)}`
+      `💰 Entrada registrada!\n\n` +
+      `Descrição: ${income.description}\n` +
+      `Origem: ${income.source}\n` +
+      `Valor: R$ ${income.amount.toFixed(2)}\n\n` +
+      `📈 Orçamento atualizado:\n` +
+      `De: R$ ${oldBudget.toFixed(2)}\n` +
+      `Para: R$ ${newBudget.toFixed(2)}`
     );
   }
+
+
 
   private async showProfile(message: Message): Promise<void> {
     const user = memoryService.getUser(message.from)!;

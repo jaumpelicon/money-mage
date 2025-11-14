@@ -1,5 +1,6 @@
 # Dependências
 node_modules/
+sessions/
 package-lock.json
 yarn.lock
 
